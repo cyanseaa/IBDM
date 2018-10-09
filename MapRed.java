@@ -162,9 +162,6 @@ public class MapRed {
                                 if (tokenizer.hasMoreTokens()) {
                                     int v = Integer.parseInt(tokenizer.nextToken());
 
-                                    //Should be unnecessary here due to chunking system!
-                                    if (firstfileTag.equals(tag)) continue;
-
                                     if (firstIsX) okey.set(firstMatch + " " + k);
                                     else okey.set(k + " " + firstMatch);
                                     oval.set(min(firstCount, v));
@@ -208,55 +205,8 @@ public class MapRed {
         }
     }
 
-    public static class BruteForceSimilarity extends Reducer<Text, FloatWritable, Text, FloatWritable> {
-        private FloatWritable oval = new FloatWritable();
-
-        /**
-         * Brute forces to verify earlier computations.
-         *
-         * @param ikey             pair (entry1, entry2) of wto wikipedia entries that were found similar in filtering.
-         * @param approxSimilarity approxmiated similarity between two entries, not used.
-         * @param context
-         * @throws InterruptedException
-         * @throws IOException
-         */
-        @Override
-        public void reduce(Text ikey, Iterable<FloatWritable> approxSimilarity, Context context) throws InterruptedException, IOException {
-            // Should consider multiples of qgrams also earlier!
-            Map<String, Integer> qgramsInFirst = new HashMap<>();
-            Map<String, Integer> qgramsInSecond = new HashMap<>();
-            StringTokenizer reader = new StringTokenizer(ikey.toString());
-
-            String entry1 = reader.nextToken();
-            String entry2 = reader.nextToken();
-
-            for (int i = q - 1; i < entry1.length(); i++) {
-                String qgram = entry1.substring(i - q + 1, i + 1);
-                qgramsInFirst.put(qgram, qgramsInFirst.getOrDefault(qgram, 0) + 1);
-            }
-
-            for (int i = q - 1; i < entry2.length(); i++) {
-                String qgram = entry2.substring(i - q + 1, i + 1);
-                qgramsInSecond.put(qgram, qgramsInSecond.getOrDefault(qgram, 0) + 1);
-            }
-
-            int total = entry1.length() + entry2.length() - 2 * (q - 1);
-            int common = 0;
-
-            for (Map.Entry<String, Integer> entry : qgramsInFirst.entrySet())
-                if (qgramsInSecond.containsKey(entry.getKey()))
-                    common += min(entry.getValue(), qgramsInSecond.get(entry.getKey()));
-
-            float distance = 1 - (float) common / (float) (total - common);
-            oval.set(distance);
-
-            context.write(ikey, approxSimilarity.iterator().next());
-        }
-
-    }
-
-    public static void filter_step1(Configuration conf, String inputPath, String outputPath) throws Exception {
-        Job job1 = Job.getInstance(conf, "Filter phase 1");
+    public static void phase1(Configuration conf, String inputPath, String outputPath) throws Exception {
+        Job job1 = Job.getInstance(conf, "Phase 1");
         job1.setJarByClass(MapRed.class);
         job1.setMapperClass(MapRed.QGramFinder.class);
 
@@ -271,8 +221,8 @@ public class MapRed {
         }
     }
 
-    public static void filter_step2(Configuration conf, String outputPath) throws Exception {
-        Job job2 = Job.getInstance(conf, "Filter phase 2");
+    public static void phase2(Configuration conf, String outputPath) throws Exception {
+        Job job2 = Job.getInstance(conf, "Phase 2");
         job2.setJarByClass(MapRed.class);
         job2.setMapperClass(MapRed.CountByQram.class);
         job2.setReducerClass(MapRed.SplitToChunks.class);
@@ -289,8 +239,8 @@ public class MapRed {
         }
     }
 
-    public static void filter_step3(Configuration conf, String outputPath) throws Exception {
-        Job job3 = Job.getInstance(conf, "Filter phase 3");
+    public static void phase3(Configuration conf, String outputPath) throws Exception {
+        Job job3 = Job.getInstance(conf, "Phase 3");
         job3.setJarByClass(MapRed.class);
         job3.setMapOutputKeyClass(Text.class);
         job3.setMapOutputValueClass(IntWritable.class);
@@ -300,28 +250,11 @@ public class MapRed {
         job3.setInputFormatClass(SequenceFileInputFormat.class);
         job3.setOutputKeyClass(Text.class);
         job3.setOutputValueClass(FloatWritable.class);
-//        job3.setOutputFormatClass(SequenceFileOutputFormat.class);
 
 
         FileInputFormat.addInputPath(job3, new Path(outputPath, "intermediate2"));
-        FileOutputFormat.setOutputPath(job3, new Path(outputPath, "filter"));
+        FileOutputFormat.setOutputPath(job3, new Path(outputPath, "final"));
         if (!job3.waitForCompletion(true)) {
-            System.exit(1);
-        }
-    }
-
-    public static void verify(Configuration conf, String outputPath) throws Exception {
-        Job job4 = Job.getInstance(conf, "Verification phase");
-        job4.setJarByClass(MapRed.class);
-        job4.setReducerClass(MapRed.BruteForceSimilarity.class);
-
-        job4.setInputFormatClass(SequenceFileInputFormat.class);
-        job4.setOutputKeyClass(Text.class);
-        job4.setOutputValueClass(FloatWritable.class);
-
-        FileInputFormat.addInputPath(job4, new Path(outputPath, "filter"));
-        FileOutputFormat.setOutputPath(job4, new Path(outputPath, "verified"));
-        if (!job4.waitForCompletion(true)) {
             System.exit(1);
         }
     }
@@ -330,9 +263,8 @@ public class MapRed {
         Configuration conf = new Configuration();
         String inputPath = args[0];
         String outputPath = args[1];
-        filter_step1(conf, inputPath, outputPath);
-        filter_step2(conf, outputPath);
-        filter_step3(conf, outputPath);
-//        verify(conf, outputPath);
+        phase1(conf, inputPath, outputPath);
+        phase2(conf, outputPath);
+        phase3(conf, outputPath);
     }
 }
